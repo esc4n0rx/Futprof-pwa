@@ -10,6 +10,7 @@ import { CarrinhoScreen } from "./screen-carrinho"
 import { PerfilScreen } from "./screen-perfil"
 import { ContasScreen } from "./screen-contas"
 import { LicenseActivationScreen } from "./screen-license-activation"
+import { PushBootstrap } from "./push-bootstrap"
 
 const screenLabels: Record<string, string> = {
   home: "Home",
@@ -59,6 +60,8 @@ export function AppShell() {
 
   return (
     <div className="relative min-h-screen flex flex-col max-w-lg mx-auto">
+      <PushBootstrap />
+
       {/* Top bar */}
       <header className="sticky top-0 z-40 glass-navbar px-5 py-3 flex items-center justify-between">
         <div className="flex items-center gap-2">

@@ -1,12 +1,15 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { CheckCircle2, Loader2, LogOut, RefreshCw, Shield, Smartphone, XCircle } from "lucide-react"
+import { Bell, CheckCircle2, Loader2, LogOut, RefreshCw, Shield, Smartphone, XCircle } from "lucide-react"
 import { useApp } from "@/lib/app-context"
 import { resolveCurrentDevicePayload } from "@/lib/services/device-identity"
 import { licensesService } from "@/lib/services/licenses-service"
+import { isOneSignalPermissionGranted, requestOneSignalPermission, setupOneSignal } from "@/lib/services/onesignal-client"
+import { pushService } from "@/lib/services/push-service"
 import { settingsService } from "@/lib/services/settings-service"
 import type { LicenseCheckResponse } from "@/lib/types/licenses"
+import type { PushConfig } from "@/lib/types/push"
 import type { DeviceRecord } from "@/lib/types/settings"
 import { cn } from "@/lib/utils"
 
@@ -39,6 +42,12 @@ export function PerfilScreen() {
   const [loadingDevices, setLoadingDevices] = useState(false)
   const [removingDeviceId, setRemovingDeviceId] = useState<string | null>(null)
   const [registeringDevice, setRegisteringDevice] = useState(false)
+
+  const [pushConfig, setPushConfig] = useState<PushConfig | null>(null)
+  const [loadingPush, setLoadingPush] = useState(false)
+  const [requestingPushPermission, setRequestingPushPermission] = useState(false)
+  const [testingPush, setTestingPush] = useState(false)
+  const [pushPermissionGranted, setPushPermissionGranted] = useState<boolean | null>(null)
 
   const [otpEmail, setOtpEmail] = useState("")
   const [otpCode, setOtpCode] = useState("")
@@ -78,9 +87,31 @@ export function PerfilScreen() {
     }
   }, [addToast, withAuth])
 
+  const loadPushConfig = useCallback(async () => {
+    setLoadingPush(true)
+    try {
+      const response = await withAuth((token) => pushService.config(token))
+      setPushConfig(response.push)
+
+      if (response.push.enabled && response.push.provider === "onesignal" && response.push.appId && response.push.externalUserId) {
+        await setupOneSignal({
+          appId: response.push.appId,
+          externalUserId: response.push.externalUserId,
+        })
+        setPushPermissionGranted(await isOneSignalPermissionGranted())
+      } else {
+        setPushPermissionGranted(null)
+      }
+    } catch {
+      addToast("Falha ao carregar configuracao de push.", "error")
+    } finally {
+      setLoadingPush(false)
+    }
+  }, [addToast, withAuth])
+
   useEffect(() => {
-    void Promise.all([loadLicense(), loadDevices()])
-  }, [loadDevices, loadLicense])
+    void Promise.all([loadLicense(), loadDevices(), loadPushConfig()])
+  }, [loadDevices, loadLicense, loadPushConfig])
 
   async function handleRequestOtp() {
     if (!otpEmail.trim()) {
@@ -164,6 +195,52 @@ export function PerfilScreen() {
       addToast("Falha ao registrar dispositivo atual.", "error")
     } finally {
       setRegisteringDevice(false)
+    }
+  }
+
+  async function handleRequestPushPermission() {
+    if (!pushConfig?.enabled || !pushConfig.appId || !pushConfig.externalUserId) {
+      addToast("Push nao esta disponivel para este usuario.", "warning")
+      return
+    }
+
+    setRequestingPushPermission(true)
+    try {
+      await setupOneSignal({
+        appId: pushConfig.appId,
+        externalUserId: pushConfig.externalUserId,
+      })
+      const granted = await requestOneSignalPermission()
+      setPushPermissionGranted(granted)
+      addToast(granted ? "Permissao de notificacao concedida." : "Permissao de notificacao nao concedida.", granted ? "success" : "warning")
+    } catch {
+      addToast("Falha ao solicitar permissao de push.", "error")
+    } finally {
+      setRequestingPushPermission(false)
+    }
+  }
+
+  async function handleSendPushTest() {
+    setTestingPush(true)
+    try {
+      const response = await withAuth((token) =>
+        pushService.test(token, {
+          title: "Teste FutProf",
+          body: "Push de teste enviado pelo app.",
+          url: "/",
+        }),
+      )
+
+      if (!response.sent) {
+        addToast(`Push de teste nao enviado: ${response.reason ?? "motivo nao informado"}.`, "warning")
+        return
+      }
+
+      addToast("Push de teste enviado com sucesso.", "success")
+    } catch {
+      addToast("Falha ao enviar push de teste.", "error")
+    } finally {
+      setTestingPush(false)
     }
   }
 
@@ -319,6 +396,58 @@ export function PerfilScreen() {
         ))}
       </div>
 
+      <div className="glass rounded-2xl p-4 space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
+            <Bell className="w-4 h-4" /> Push notifications
+          </h2>
+          <button onClick={() => void loadPushConfig()} className="text-xs text-primary flex items-center gap-1" disabled={loadingPush}>
+            <RefreshCw className={cn("w-3.5 h-3.5", loadingPush && "animate-spin")} /> Atualizar
+          </button>
+        </div>
+
+        {loadingPush && <p className="text-xs text-muted-foreground">Carregando configuracao de push...</p>}
+
+        {!loadingPush && pushConfig && (
+          <>
+            <p className="text-xs text-muted-foreground">
+              Provedor: {pushConfig.provider} | Habilitado: {pushConfig.enabled ? "sim" : "nao"}
+            </p>
+            {pushConfig.externalUserId && (
+              <p className="text-[11px] text-muted-foreground truncate">externalUserId: {pushConfig.externalUserId}</p>
+            )}
+            <p className="text-[11px] text-muted-foreground">
+              Permissao local:{" "}
+              {pushPermissionGranted === null ? "nao verificada" : pushPermissionGranted ? "concedida" : "nao concedida"}
+            </p>
+
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => void handleRequestPushPermission()}
+                disabled={!pushConfig.enabled || requestingPushPermission}
+                className="h-10 rounded-xl bg-secondary text-xs font-semibold text-foreground flex items-center justify-center gap-1.5 disabled:opacity-60"
+              >
+                {requestingPushPermission ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                Habilitar push
+              </button>
+
+              <button
+                onClick={() => void handleSendPushTest()}
+                disabled={!pushConfig.enabled || testingPush}
+                className="h-10 rounded-xl bg-secondary text-xs font-semibold text-foreground flex items-center justify-center gap-1.5 disabled:opacity-60"
+              >
+                {testingPush ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                Enviar teste
+              </button>
+            </div>
+
+            <p className="text-[11px] text-muted-foreground">
+              Em iOS/iPadOS, notificacoes web push exigem app instalado na Home Screen (16.4+).
+            </p>
+          </>
+        )}
+      </div>
+
       <div className="glass rounded-2xl p-4 space-y-2.5">
         <h2 className="text-sm font-semibold text-foreground">Suporte e documentacao</h2>
         <p className="text-xs text-muted-foreground">
@@ -326,8 +455,8 @@ export function PerfilScreen() {
           monitoramento de eventos e setores, habilitar alvos de compra e acompanhar divergencias no carrinho em tempo real.
         </p>
         <p className="text-xs text-muted-foreground">
-          Endpoints principais: `/monitor/events`, `/monitor/sectors`, `/purchase/targets`, `/cart`, `/settings/devices` e
-          `/licenses/check`.
+          Endpoints principais: `/monitor/events`, `/monitor/sectors`, `/purchase/targets`, `/cart`, `/settings/devices`,
+          `/licenses/check`, `/push/config` e `/push/test`.
         </p>
         <p className="text-xs text-muted-foreground">
           Para suporte operacional: validar credenciais das contas, status do bot (running), escopo de setores e licenca ativa.
