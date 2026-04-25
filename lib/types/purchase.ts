@@ -21,10 +21,36 @@ export interface PurchaseAttemptPayload {
   price: string
 }
 
-export interface PurchaseAttemptResponse {
+export interface PurchaseEndpointAttempt {
+  endpoint: string
   success: boolean
+  httpStatus: number | null
+  responseStatus: number | null
+  message: string | null
+  error: string | null
+  retryAfterSeconds: number | null
+  responsePreview: unknown
+}
+
+export interface PurchaseAccountFailure {
+  accountId: string
+  accountName: string
+  reason: string
+  attempts?: PurchaseEndpointAttempt[]
+}
+
+export interface PurchaseAttemptSuccessResponse {
+  success: true
   accountName: string
   ticketCount: number
   maxTicketsPerAccount: number
   cartUrl: string
+  attempts: PurchaseEndpointAttempt[]
 }
+
+export interface PurchaseAttemptFailureResponse {
+  success: false
+  failures: PurchaseAccountFailure[]
+}
+
+export type PurchaseAttemptResponse = PurchaseAttemptSuccessResponse | PurchaseAttemptFailureResponse

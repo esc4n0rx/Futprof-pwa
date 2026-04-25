@@ -18,9 +18,16 @@ import { useApp } from "@/lib/app-context"
 import { botsService } from "@/lib/services/bots-service"
 import { accountsService } from "@/lib/services/accounts-service"
 import { accountCreationService } from "@/lib/services/account-creation-service"
-import type { Account, CreateAutomationAccountSeed } from "@/lib/types/accounts"
+import type {
+  Account,
+  AccountBaseResponse,
+  BaseAccountRecord,
+  ConsumeAccountBasePayload,
+  CreateAutomationAccountFailureResponse,
+  CreateAutomationAccountResultSummary,
+  CreateAutomationAccountSeed,
+} from "@/lib/types/accounts"
 import type { Bot } from "@/lib/types/bots"
-import accountCreationSeedData from "@/data/account-creation-seed.json"
 import { cn } from "@/lib/utils"
 
 interface AccountFormState {
@@ -39,7 +46,7 @@ const EMPTY_FORM: AccountFormState = {
   makePrimary: false,
 }
 
-const accountCreationSeed = accountCreationSeedData as CreateAutomationAccountSeed[]
+const ACCOUNT_CREATION_BASE_URL = "https://ingressos.flamengo.com.br/"
 
 function formatDateTime(input: string | undefined): string {
   if (!input) {
@@ -52,6 +59,75 @@ function formatDateTime(input: string | undefined): string {
   }
 
   return parsed.toLocaleString("pt-BR")
+}
+
+function diagnosticsSummary(result: CreateAutomationAccountResultSummary | CreateAutomationAccountFailureResponse): string {
+  const diagnostics = result.diagnostics
+  const messages = [
+    ...(diagnostics?.alerts ?? []),
+    ...(diagnostics?.fieldErrors ?? []),
+    ...(diagnostics?.validationMessages?.map((item) => `${item.name}: ${item.message}`) ?? []),
+  ].filter(Boolean)
+
+  return messages.slice(0, 2).join(" | ")
+}
+
+function normalizeSex(value: string): string {
+  const normalized = value.trim().toLowerCase()
+  if (normalized.startsWith("f")) {
+    return "F"
+  }
+
+  if (normalized.startsWith("m")) {
+    return "M"
+  }
+
+  return value
+}
+
+function toAutomationSeed(record: BaseAccountRecord, index: number): CreateAutomationAccountSeed {
+  return {
+    accountName: `Conta Auto ${record.cpf.slice(-4) || String(index + 1).padStart(3, "0")}`,
+    baseUrl: ACCOUNT_CREATION_BASE_URL,
+    nome: record.nome,
+    cpf: record.cpf,
+    rg: record.rg,
+    data_nasc: record.data_nasc,
+    sexo: normalizeSex(record.sexo),
+    email: record.email,
+    senha: record.senha,
+    cep: record.cep,
+    endereco: record.endereco,
+    numero: Number(record.numero),
+    bairro: record.bairro,
+    cidade: record.cidade,
+    estado: record.estado,
+    celular: record.celular,
+  }
+}
+
+async function fetchAccountBase(): Promise<BaseAccountRecord[]> {
+  const response = await fetch("/api/account-base", { cache: "no-store" })
+  if (!response.ok) {
+    throw new Error("Falha ao carregar data/base.json.")
+  }
+
+  const payload = (await response.json()) as AccountBaseResponse
+  return payload.accounts
+}
+
+async function consumeAccountBase(payload: ConsumeAccountBasePayload): Promise<void> {
+  const response = await fetch("/api/account-base", {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  })
+
+  if (!response.ok) {
+    throw new Error("Falha ao atualizar data/base.json.")
+  }
 }
 
 export function ContasScreen() {
@@ -72,6 +148,9 @@ export function ContasScreen() {
 
   const [massQuantity, setMassQuantity] = useState("10")
   const [massCreating, setMassCreating] = useState(false)
+  const [massResults, setMassResults] = useState<CreateAutomationAccountResultSummary[]>([])
+  const [baseAccounts, setBaseAccounts] = useState<BaseAccountRecord[]>([])
+  const [loadingBaseAccounts, setLoadingBaseAccounts] = useState(true)
 
   const activeBot = useMemo(() => bots.find((bot) => bot.id === selectedBotId) ?? null, [bots, selectedBotId])
 
@@ -112,9 +191,26 @@ export function ContasScreen() {
     [addToast, withAuth],
   )
 
+  const loadBaseAccounts = useCallback(async () => {
+    setLoadingBaseAccounts(true)
+    try {
+      const accountsFromBase = await fetchAccountBase()
+      setBaseAccounts(accountsFromBase)
+    } catch {
+      setBaseAccounts([])
+      addToast("Falha ao carregar /data/base.json.", "error")
+    } finally {
+      setLoadingBaseAccounts(false)
+    }
+  }, [addToast])
+
   useEffect(() => {
     void loadBots()
   }, [loadBots])
+
+  useEffect(() => {
+    void loadBaseAccounts()
+  }, [loadBaseAccounts])
 
   useEffect(() => {
     if (!selectedBotId) {
@@ -292,14 +388,15 @@ export function ContasScreen() {
       return
     }
 
-    if (accountCreationSeed.length === 0) {
-      addToast("Arquivo /data/account-creation-seed.json vazio.", "error")
+    if (baseAccounts.length === 0) {
+      addToast("Arquivo /data/base.json vazio ou indisponivel.", "error")
       return
     }
 
-    const selectedSeeds = accountCreationSeed.slice(0, quantity)
-    if (selectedSeeds.length < quantity) {
-      addToast(`Somente ${selectedSeeds.length} contas disponiveis no JSON.`, "warning")
+    const selectedBaseAccounts = baseAccounts.slice(0, quantity)
+    const selectedSeeds = selectedBaseAccounts.map((record, index) => toAutomationSeed(record, index))
+    if (selectedBaseAccounts.length < quantity) {
+      addToast(`Somente ${selectedBaseAccounts.length} contas disponiveis no base.json.`, "warning")
     }
 
     if (selectedSeeds.length === 0) {
@@ -307,6 +404,7 @@ export function ContasScreen() {
     }
 
     setMassCreating(true)
+    setMassResults([])
     try {
       const results = await withAuth((token) =>
         Promise.allSettled(
@@ -320,15 +418,74 @@ export function ContasScreen() {
         ),
       )
 
-      const successCount = results.filter((result) => result.status === "fulfilled" && result.value.success).length
-      const failCount = results.length - successCount
+      const summaries: CreateAutomationAccountResultSummary[] = results.map((result, index) => {
+        const seed = selectedSeeds[index]
+        if (result.status === "rejected") {
+          return {
+            success: false,
+            email: seed.email,
+            error: "Falha de comunicacao com o backend.",
+          }
+        }
 
-      if (successCount > 0) {
-        addToast(`${successCount} conta(s) criada(s) com sucesso.`, "success")
+        const value = result.value
+        if (value.success) {
+          return {
+            success: true,
+            email: value.email,
+            savedToBot: value.savedToBot,
+            accountId: value.accountId,
+            saveError: value.saveError,
+          }
+        }
+
+        return {
+          success: false,
+          email: value.email ?? seed.email,
+          error: value.error,
+          step: value.step,
+          diagnostics: value.diagnostics,
+          screenshotPath: value.screenshotPath,
+        }
+      })
+
+      setMassResults(summaries)
+
+      const siteSuccessCount = summaries.filter((result) => result.success).length
+      const savedCount = summaries.filter((result) => result.success && result.savedToBot).length
+      const saveFailCount = summaries.filter((result) => result.success && result.savedToBot === false).length
+      const failCount = summaries.length - siteSuccessCount
+
+      if (siteSuccessCount > 0) {
+        addToast(`${siteSuccessCount} conta(s) criada(s) no site; ${savedCount} salva(s) no bot.`, "success")
+      }
+
+      if (saveFailCount > 0) {
+        addToast(`${saveFailCount} conta(s) criadas, mas nao salvas no bot.`, "warning")
       }
 
       if (failCount > 0) {
         addToast(`${failCount} conta(s) falharam na criacao.`, "warning")
+      }
+
+      const consumed = summaries
+        .filter((result) => result.success)
+        .map((result) => {
+          const source = selectedBaseAccounts.find((account) => account.email === result.email)
+          return source ? { email: source.email, cpf: source.cpf } : null
+        })
+        .filter((item): item is { email: string; cpf: string } => Boolean(item))
+
+      if (consumed.length > 0) {
+        try {
+          await consumeAccountBase({ used: consumed })
+          setBaseAccounts((prev) => {
+            const usedKeys = new Set(consumed.map((item) => `${item.email}|${item.cpf}`))
+            return prev.filter((account) => !usedKeys.has(`${account.email}|${account.cpf}`))
+          })
+        } catch {
+          addToast("Contas criadas, mas nao foi possivel remover do base.json.", "warning")
+        }
       }
 
       await loadAccounts(selectedBotId)
@@ -384,7 +541,14 @@ export function ContasScreen() {
       <div className="glass rounded-2xl p-4 space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold text-foreground">Criacao em massa</h2>
-          <span className="text-xs text-muted-foreground">{accountCreationSeed.length} disponiveis no JSON</span>
+          <button
+            onClick={() => void loadBaseAccounts()}
+            disabled={loadingBaseAccounts || massCreating}
+            className="text-xs text-primary flex items-center gap-1 disabled:opacity-60"
+          >
+            <RefreshCw className={cn("w-3 h-3", loadingBaseAccounts && "animate-spin")} />
+            {baseAccounts.length} no base.json
+          </button>
         </div>
 
         <div className="flex items-center gap-2">
@@ -397,7 +561,7 @@ export function ContasScreen() {
           />
           <button
             onClick={() => void handleMassCreate()}
-            disabled={!selectedBotId || massCreating}
+            disabled={!selectedBotId || massCreating || loadingBaseAccounts || baseAccounts.length === 0}
             className="h-10 px-4 rounded-xl bg-green-500/15 border border-green-500/30 text-green-300 text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
           >
             {massCreating ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />} Criar em massa
@@ -410,6 +574,44 @@ export function ContasScreen() {
             <RotateCcw className="w-4 h-4" /> Reset bot
           </button>
         </div>
+
+        {massResults.length > 0 && (
+          <div className="rounded-xl border border-border/80 bg-background/40 divide-y divide-border/60 overflow-hidden">
+            {massResults.slice(0, 8).map((result, index) => {
+              const ok = result.success && result.savedToBot !== false
+              const partial = result.success && result.savedToBot === false
+              const detail =
+                result.saveError ||
+                result.error ||
+                diagnosticsSummary(result) ||
+                (result.accountId ? `accountId: ${result.accountId}` : "Sem detalhe adicional.")
+
+              return (
+                <div key={`${result.email ?? index}-${index}`} className="p-2.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-[11px] font-medium text-foreground truncate">{result.email ?? "email indisponivel"}</p>
+                    <span
+                      className={cn(
+                        "text-[10px] px-2 py-0.5 rounded-full shrink-0",
+                        ok && "bg-green-400/10 text-green-300",
+                        partial && "bg-yellow-500/10 text-yellow-300",
+                        !result.success && "bg-red-500/10 text-red-300",
+                      )}
+                    >
+                      {ok ? "Salva" : partial ? "Criada no site" : result.step ?? "Falha"}
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground mt-1 break-words">{detail}</p>
+                </div>
+              )
+            })}
+            {massResults.length > 8 && (
+              <div className="p-2.5 text-[10px] text-muted-foreground">
+                Mais {massResults.length - 8} resultado(s) omitido(s) nesta visualizacao.
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="space-y-3">

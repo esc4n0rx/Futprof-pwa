@@ -55,11 +55,38 @@ export interface MonitorSectorsResponse {
   sessions: MonitorSectorSession[]
 }
 
+export interface MonitorNotificationPurchaseAttempt {
+  endpoint: string
+  success: boolean
+  httpStatus: number | null
+  responseStatus: number | null
+  message: string | null
+  error: string | null
+  retryAfterSeconds: number | null
+  responsePreview: unknown
+}
+
+export interface MonitorNotificationPurchaseFailure {
+  accountId: string
+  accountName: string
+  reason: string
+  attempts?: MonitorNotificationPurchaseAttempt[]
+}
+
+export interface MonitorNotificationPayload {
+  eventName?: string
+  sectorName?: string
+  price?: string
+  reason?: string
+  failures?: MonitorNotificationPurchaseFailure[]
+  [key: string]: unknown
+}
+
 export interface MonitorNotification {
   id: number
   type: string
   event_id: string
-  payload: Record<string, unknown> | null
+  payload: MonitorNotificationPayload | null
   created_at: string
 }
 

@@ -23,8 +23,17 @@ function formatDateTime(input: string | null | undefined): string {
 }
 
 function notificationMessage(item: MonitorNotification): string {
+  const label = item.type.replaceAll("_", " ").toLowerCase()
+  const eventName = item.payload?.eventName
+  const sectorName = item.payload?.sectorName
+  const reason = item.payload?.reason
+
+  if (eventName || sectorName || reason) {
+    return [label, eventName, sectorName, reason].filter(Boolean).join(" - ")
+  }
+
   const eventId = item.event_id ? ` (evento ${item.event_id})` : ""
-  return `${item.type}${eventId}`
+  return `${label}${eventId}`
 }
 
 export function HomeScreen() {
@@ -268,6 +277,11 @@ export function HomeScreen() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-xs text-foreground leading-snug">{notificationMessage(item)}</p>
+                    {item.payload?.failures && item.payload.failures.length > 0 && (
+                      <p className="text-[10px] text-yellow-300 mt-0.5">
+                        {item.payload.failures.length} conta(s) com falha na compra automatica
+                      </p>
+                    )}
                     <p className="text-[10px] text-muted-foreground mt-0.5 font-mono">{formatDateTime(item.created_at)}</p>
                   </div>
                 </div>

@@ -22,7 +22,7 @@ import { monitoringService } from "@/lib/services/monitoring-service"
 import type { Bot as BotType } from "@/lib/types/bots"
 import type { CartResponse } from "@/lib/types/cart"
 import type { MonitorSectorSession } from "@/lib/types/monitoring"
-import type { PurchaseTarget } from "@/lib/types/purchase"
+import type { PurchaseAttemptResponse, PurchaseEndpointAttempt, PurchaseTarget } from "@/lib/types/purchase"
 import { cn } from "@/lib/utils"
 
 interface AttemptForm {
@@ -37,6 +37,17 @@ const EMPTY_ATTEMPT_FORM: AttemptForm = {
   sectorId: "",
   sectorName: "",
   price: "",
+}
+
+function attemptStatusText(attempt: PurchaseEndpointAttempt): string {
+  const status = [
+    attempt.httpStatus ? `HTTP ${attempt.httpStatus}` : null,
+    attempt.responseStatus !== null ? `status=${attempt.responseStatus}` : null,
+    attempt.message,
+    attempt.error,
+  ].filter(Boolean)
+
+  return status.join(" ")
 }
 
 export function CarrinhoScreen() {
@@ -58,6 +69,7 @@ export function CarrinhoScreen() {
 
   const [attemptForm, setAttemptForm] = useState<AttemptForm>(EMPTY_ATTEMPT_FORM)
   const [attemptLoading, setAttemptLoading] = useState(false)
+  const [lastAttempt, setLastAttempt] = useState<PurchaseAttemptResponse | null>(null)
 
   const selectedBot = useMemo(() => bots.find((bot) => bot.id === selectedBotId) ?? null, [bots, selectedBotId])
   const activeBots = useMemo(() => bots.filter((bot) => bot.is_running), [bots])
@@ -233,10 +245,16 @@ export function CarrinhoScreen() {
         }),
       )
 
-      addToast(
-        `Tentativa concluida: ${response.accountName} reservou ${response.ticketCount}/${response.maxTicketsPerAccount}.`,
-        response.success ? "success" : "warning",
-      )
+      setLastAttempt(response)
+
+      if (response.success) {
+        addToast(
+          `Reserva feita por ${response.accountName}: ${response.ticketCount}/${response.maxTicketsPerAccount}.`,
+          "success",
+        )
+      } else {
+        addToast(`${response.failures.length} conta(s) falharam na reserva manual.`, "warning")
+      }
 
       setAttemptForm(EMPTY_ATTEMPT_FORM)
       await loadCart(selectedActiveBotId)
@@ -469,6 +487,64 @@ export function CarrinhoScreen() {
         >
           {attemptLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />} Tentar reservar
         </button>
+
+        {lastAttempt && (
+          <div className="rounded-xl border border-border/80 bg-background/40 p-3 space-y-2">
+            {lastAttempt.success ? (
+              <>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-semibold text-green-300">Reserva confirmada</p>
+                  <p className="text-[10px] text-muted-foreground">
+                    {lastAttempt.ticketCount}/{lastAttempt.maxTicketsPerAccount} ingresso(s)
+                  </p>
+                </div>
+                <p className="text-[11px] text-muted-foreground">Conta: {lastAttempt.accountName}</p>
+                {lastAttempt.cartUrl && (
+                  <button
+                    onClick={() => window.open(lastAttempt.cartUrl, "_blank", "noopener,noreferrer")}
+                    className="h-8 px-3 rounded-lg bg-secondary text-xs font-semibold text-foreground flex items-center gap-1.5"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" /> Abrir carrinho da reserva
+                  </button>
+                )}
+                {lastAttempt.attempts.length > 0 && (
+                  <div className="space-y-1">
+                    {lastAttempt.attempts.map((attempt) => (
+                      <p
+                        key={attempt.endpoint}
+                        className={cn("text-[10px] break-words", attempt.success ? "text-green-300" : "text-muted-foreground")}
+                      >
+                        {attempt.endpoint}: {attempt.success ? "ok" : attemptStatusText(attempt) || "falhou"}
+                      </p>
+                    ))}
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                <p className="text-xs font-semibold text-yellow-300">Nenhuma conta conseguiu reservar</p>
+                <div className="space-y-2">
+                  {lastAttempt.failures.slice(0, 4).map((failure) => (
+                    <div key={failure.accountId} className="rounded-lg border border-border/70 bg-secondary/30 p-2">
+                      <p className="text-[11px] font-medium text-foreground">{failure.accountName}</p>
+                      <p className="text-[10px] text-muted-foreground break-words">{failure.reason}</p>
+                      {failure.attempts?.slice(0, 2).map((attempt) => (
+                        <p key={attempt.endpoint} className="text-[10px] text-muted-foreground break-words mt-1">
+                          {attempt.endpoint}: {attemptStatusText(attempt) || "falhou"}
+                        </p>
+                      ))}
+                    </div>
+                  ))}
+                  {lastAttempt.failures.length > 4 && (
+                    <p className="text-[10px] text-muted-foreground">
+                      Mais {lastAttempt.failures.length - 4} falha(s) omitida(s).
+                    </p>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="glass rounded-2xl p-4 space-y-3">

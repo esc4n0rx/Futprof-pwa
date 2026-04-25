@@ -5,6 +5,7 @@ import { CheckCircle2, XCircle, AlertTriangle, Info } from "lucide-react"
 import { useApp } from "@/lib/app-context"
 import { botsService } from "@/lib/services/bots-service"
 import { monitoringService } from "@/lib/services/monitoring-service"
+import type { MonitorNotification } from "@/lib/types/monitoring"
 import { cn } from "@/lib/utils"
 
 const icons = {
@@ -21,9 +22,17 @@ const colors = {
   info: "border-blue-500/30 text-blue-400",
 }
 
-function formatMonitoringToast(type: string, eventId: string): string {
-  const normalized = type.replaceAll("_", " ").toLowerCase()
-  return `Monitor: ${normalized} (evento ${eventId || "-"})`
+function formatMonitoringToast(item: MonitorNotification): string {
+  const normalized = item.type.replaceAll("_", " ").toLowerCase()
+  const eventName = item.payload?.eventName
+  const sectorName = item.payload?.sectorName
+  const reason = item.payload?.reason
+
+  if (eventName || sectorName || reason) {
+    return `Monitor: ${[normalized, eventName, sectorName, reason].filter(Boolean).join(" - ")}`
+  }
+
+  return `Monitor: ${normalized} (evento ${item.event_id || "-"})`
 }
 
 export function ToastContainer() {
@@ -68,7 +77,7 @@ export function ToastContainer() {
           }
 
           seenIds.add(item.id)
-          addToast(formatMonitoringToast(item.type, item.event_id), "info")
+          addToast(formatMonitoringToast(item), item.type === "PURCHASE_FAILED" ? "warning" : "info")
         }
       } catch {
         // Keep toast polling resilient; UI toasts should not crash on monitor errors.

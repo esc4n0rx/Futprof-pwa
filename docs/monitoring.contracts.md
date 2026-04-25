@@ -76,6 +76,49 @@ Response 200:
 }
 ```
 
+Exemplo de `payload` para `type=PURCHASE_FAILED`:
+```json
+{
+  "eventName": "Jogo X",
+  "sectorName": "Norte",
+  "price": "R$ 80",
+  "reason": "Nenhuma conta conseguiu reservar",
+  "failures": [
+    {
+      "accountId": "uuid",
+      "accountName": "Socio Principal",
+      "reason": "member/book-multiple-tickets: HTTP 200 status=0 Setor indisponivel | buy/book-multiple-tickets-sectors: HTTP 200 status=0 Setor indisponivel",
+      "attempts": [
+        {
+          "endpoint": "member/book-multiple-tickets",
+          "success": false,
+          "httpStatus": 200,
+          "responseStatus": 0,
+          "message": "Setor indisponivel",
+          "error": null,
+          "retryAfterSeconds": null,
+          "responsePreview": { "status": 0, "message": "Setor indisponivel" }
+        },
+        {
+          "endpoint": "buy/book-multiple-tickets-sectors",
+          "success": false,
+          "httpStatus": 200,
+          "responseStatus": 0,
+          "message": "Setor indisponivel",
+          "error": null,
+          "retryAfterSeconds": null,
+          "responsePreview": { "status": 0, "message": "Setor indisponivel" }
+        }
+      ]
+    }
+  ]
+}
+```
+
+Notas:
+- `failures` aparece nas falhas de compra automatica e resume o resultado por conta.
+- `attempts` detalha os endpoints de reserva acionados no site.
+
 ## POST /monitor/scope/monitor
 Equivalente `/monitor`.
 ```json

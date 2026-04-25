@@ -68,9 +68,81 @@ export interface CreateAutomationAccountPayload extends CreateAutomationAccountS
   saveToBot: boolean
 }
 
-export interface CreateAutomationAccountResponse {
-  success: boolean
+export interface BaseAccountRecord {
+  nome: string
+  cpf: string
+  rg: string
+  data_nasc: string
+  sexo: string
   email: string
+  senha: string
+  cep: string
+  endereco: string
+  numero: number
+  bairro: string
+  cidade: string
+  estado: string
+  celular: string
+  [key: string]: unknown
+}
+
+export interface AccountBaseResponse {
+  accounts: BaseAccountRecord[]
+}
+
+export interface ConsumeAccountBasePayload {
+  used: Array<{
+    email: string
+    cpf: string
+  }>
+}
+
+export type CreateAutomationAccountStep = "personal-data" | "address" | "optional-data" | "final-validation"
+
+export interface CreateAutomationAccountValidationMessage {
+  name: string
+  message: string
+}
+
+export interface CreateAutomationAccountDiagnostics {
+  step?: CreateAutomationAccountStep
+  currentUrl?: string
+  title?: string
+  alerts?: string[]
+  fieldErrors?: string[]
+  validationMessages?: CreateAutomationAccountValidationMessage[]
+}
+
+export interface CreateAutomationAccountSuccessResponse {
+  success: true
+  email: string
+  currentUrl?: string
+  savedToBot: boolean
+  accountId?: string
+  saveError?: string
+}
+
+export interface CreateAutomationAccountFailureResponse {
+  success: false
+  email?: string
+  error: string
+  step?: CreateAutomationAccountStep
+  diagnostics?: CreateAutomationAccountDiagnostics
+  screenshotPath?: string
+}
+
+export type CreateAutomationAccountResponse =
+  | CreateAutomationAccountSuccessResponse
+  | CreateAutomationAccountFailureResponse
+
+export interface CreateAutomationAccountResultSummary {
+  success: boolean
+  email?: string
+  savedToBot?: boolean
+  accountId?: string
   error?: string
+  saveError?: string
+  step?: CreateAutomationAccountStep
+  diagnostics?: CreateAutomationAccountDiagnostics
   screenshotPath?: string
 }
